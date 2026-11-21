@@ -30,7 +30,7 @@ class Data:
                 self.data = f.read()
         except:
             self.data = ''
-        self.lookup = dict(enumerate(sorted(list(set(self.data))))) # index -> char
+        self.lookup = dict(enumerate(sorted(set(self.data)))) # index -> char
         self.rlookup = dict((v,k) for k,v in self.lookup.items()) # char -> index
         self.vocab_size = len(self.lookup)
         self.encode = lambda s: [self.rlookup[c] for c in s]
@@ -41,20 +41,20 @@ class Data:
     def __repr__(self):
         return f"Data(vocabSize={self.vocab_size},trainingData={len(self.traindata)},devData={len(self.devdata)})"
     
-    def splitdata(self, n: float = 0.9):
+    def splitdata(self, n: float = 0.9) -> None:
         """Splits the data into training and development data."""
         n = int(len(self.data)*n)
         self.traindata = self.data[:n]
         self.devdata = self.data[n:]
     
-    def trainingset(self, batch_size: int = 4, split: str = 'train'):
-        """Generates a batch of training/validation data."""
+    def trainingset(self, batch_size: int = 4, split: str = 'train') -> tuple:
+        """Generates a batch of training/validation data. (split = train,dev,none)"""
         data = self.traindata if split=='train' else self.devdata if split=='dev' else self.data
         index = torch.randint(len(data)-self.context, (batch_size,))
         inputs = torch.stack([data[i:i+self.context] for i in index])
         labels = torch.stack([data[i+1:i+self.context+1] for i in index])
         inputs, labels = inputs.to(DEVICE), labels.to(DEVICE)
-        return inputs,labels # tuple
+        return inputs,labels
 
 class Head(nn.Module):
     """Single head of self-attention"""
@@ -136,6 +136,7 @@ class GPT(Data, nn.Module):
 
     def __repr__(self):
         return f'GPT(sample="{self(maxlen=10)}",vocabSize={self.vocab_size},context={self.context},data={len(self.data)})'
+    
     def __call__(self, word: str = '', maxlen: int = MAXTOKENS, number: int = 0):
         n = maxlen
         if type(word)==int: word, maxlen = '', word
@@ -174,8 +175,8 @@ class GPT(Data, nn.Module):
         if plot: trackloss = []
         for i in trange(n):
             X, Y = self.trainingset(batchsize)
-            _, loss = self.forward(X,Y)
             self.optimizer.zero_grad()
+            _, loss = self.forward(X,Y)
             loss.backward()
             self.optimizer.step()
             if info:
