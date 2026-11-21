@@ -64,7 +64,6 @@ class Head(nn.Module):
         self.query = nn.Linear(n_embed, head_size, bias=False) # Every char wants to know specific things
         self.value = nn.Linear(n_embed, head_size, bias=False) # True embedding that is refined by key-queries
         self.dropout_p = DROPOUT
-        self.training = True # Only mask future tokens if training
         # self.register_buffer('tril',torch.tril(torch.ones(context, context)))
         # self.dropout = nn.Dropout(DROPOUT)
 
@@ -167,11 +166,11 @@ class GPT(Data, nn.Module):
         loss = F.cross_entropy(logits, labels)
         return logits, loss
     
-    def train(self, n: int = TRAINING_STEPS, info: bool = False, batchsize: int = BATCH, plot: bool = False):
+    def fit(self, n: int = TRAINING_STEPS, info: bool = False, batchsize: int = BATCH, plot: bool = False):
         if len(self.traindata) <= batchsize:
             print("No data to train with!")
             return
-        self._changemode(True)
+        self.train()
         if plot: trackloss = []
         for i in trange(n):
             X, Y = self.trainingset(batchsize)
@@ -193,7 +192,7 @@ class GPT(Data, nn.Module):
         if len(self.devdata) <= 1000: 
             print("Not enough dev-data to validate loss with!")
             return
-        self._changemode(True)
+        self.eval()
         X, Y = self.trainingset(n, 'dev')
         _, loss = self.forward(X,Y)
         return loss
@@ -201,9 +200,9 @@ class GPT(Data, nn.Module):
     @torch.no_grad()
     def generate(self, word: str = '', maxlen: int = MAXTOKENS) -> str:
         """Generate one word based on training data."""
-        self._changemode(False)
         if not word: context = torch.zeros((1,), dtype=torch.long, device=DEVICE)
         else: context = torch.tensor(self.encode(word),device=DEVICE)
+        self.eval()
         for i in range(maxlen):
             logits = self.inference(context[-self.context:]) # Feed last character
             probs = F.softmax(logits[-1], dim=-1)
@@ -217,12 +216,6 @@ class GPT(Data, nn.Module):
         for _ in range(n):
             res.append(self.generate(word, maxlen))
         return res
-
-    def _changemode(self, mode: bool = True):
-        """Change mode for heads"""
-        for b in self.blocks:
-            for h in b.sa.heads:
-                h.training = mode
 
     @torch.no_grad()
     def save(self, file: str, vocabfile: str = ''):
