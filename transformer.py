@@ -138,11 +138,11 @@ class GPT(Data, nn.Module):
     def __repr__(self):
         return f'GPT(vocabSize={self.vocab_size},context={self.context},size={self.size()})'
     
-    def sample(self, word: str | int = '', maxlen: int | str = MAXTOKENS, number: int = 0):
+    def sample(self, word: str | int = '', maxlen: int | str = MAXTOKENS, temperature: float = 1.0, top_k: int | None = None, number: int = 0):
         n = maxlen
         if type(word)==int: word, maxlen = '', word
         if type(n)==str: word = n
-        return self.generateN(number, word, maxlen) if number > 0 else self.generate(word, maxlen)
+        return self.generateN(number, word, maxlen, temperature=temperature, top_k=top_k) if number > 0 else self.generate(word, maxlen, temperature=temperature, top_k=top_k)
 
     def inference(self, inputs):
         T = inputs.numel()
@@ -200,27 +200,33 @@ class GPT(Data, nn.Module):
         return loss
     
     @torch.no_grad()
-    def generate(self, word: str = '', maxlen: int = MAXTOKENS) -> str:
+    def generate(self, word: str = '', maxlen: int = MAXTOKENS, temperature=1.0, top_k=None) -> str:
         """Generate one word based on training data."""
         if not word:
             index = self.rlookup['\n']
             context = torch.tensor([index,index], device=DEVICE)
         else: context = torch.tensor(self.encode(word),device=DEVICE)
+        if temperature==0: raise ZeroDivisionError
+        if top_k is not None and top_k<1: top_k=None
         self.eval()
-        for i in range(maxlen):
-            logits = self.inference(context[-self.context:]) # Feed last character
-            probs = F.softmax(logits[-1], dim=-1)
+        for _ in range(maxlen):
+            logits = self.inference(context[-self.context:])[-1] # Feed last character
+            logits = logits / temperature # <1 predictable, >1 creative
+            if top_k is not None:
+                k = torch.topk(logits, min(top_k, logits.numel())).values[-1]
+                logits = logits.masked_fill(logits < k, float('-inf'))
+            probs = F.softmax(logits, dim=-1)
             index = torch.multinomial(probs, 1)
             context = torch.cat((context,index), 0) # Add one to context (till maxlen)
         context = context.tolist()
         if not word: context = context[2:]
         return self.decode(context)
     
-    def generateN(self, n: int = 10, word: str = '', maxlen: int = MAXTOKENS) -> list:
+    def generateN(self, n: int = 10, word: str = '', maxlen: int = MAXTOKENS, temperature=1.0, top_k=None) -> list:
         """Generate a list of N words based on training data."""
         res = []
         for _ in range(n):
-            res.append(self.generate(word, maxlen))
+            res.append(self.generate(word, maxlen,temperature=temperature,top_k=top_k))
         return res
 
     @torch.no_grad()
