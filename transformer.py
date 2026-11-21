@@ -81,7 +81,7 @@ class Head(nn.Module):
             # Weighted aggregation of values (Values are true embedded tokens)
             # return weights @ v # BxTxT @ BxTxH = BxTxH
         # Same as ^, but more efficient:
-        return F.scaled_dot_product_attention(q, k, v, dropout_p = self.dropout_p if self.training else 0.0, is_causal = self.training)
+        return F.scaled_dot_product_attention(q, k, v, dropout_p = self.dropout_p if self.training else 0.0, is_causal = True)
 
 class MultiHeadAttention(nn.Module):
     """Multiple heads of self-attention acting in parallel."""
