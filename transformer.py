@@ -20,16 +20,18 @@ N_LAYERS = 6
 BATCH = 64
 MAXTOKENS = 300
 TRAINING_STEPS = 5000
-EPSILON = 1e-12
+EPSILON = 1e-5
 
 class Data:
     """Character-level transformer | Shared data infrastructure."""
     def __init__(self, file: str = '', context: int = BLOCK):
-        try:
-            with open(file,'r',encoding='utf-8') as f:
-                self.data = f.read()
-        except:
-            self.data = ''
+        self.data = ''
+        if file:
+            try:
+                with open(file,'r',encoding='utf-8') as f:
+                    self.data = f.read()
+            except OSError as e:
+                print(f"Couldn't read '{file}' ({e}). Skipping data.")
         self.lookup = dict(enumerate(sorted(set(self.data)))) # index -> char
         self.rlookup = dict((v,k) for k,v in self.lookup.items()) # char -> index
         self.vocab_size = len(self.lookup)
@@ -134,9 +136,9 @@ class GPT(Data, nn.Module):
         if model: self.load(model)
 
     def __repr__(self):
-        return f'GPT(sample="{self(maxlen=10)}",vocabSize={self.vocab_size},context={self.context},data={len(self.data)})'
+        return f'GPT(vocabSize={self.vocab_size},context={self.context},size={self.size()})'
     
-    def __call__(self, word: str = '', maxlen: int = MAXTOKENS, number: int = 0):
+    def sample(self, word: str | int = '', maxlen: int | str = MAXTOKENS, number: int = 0):
         n = maxlen
         if type(word)==int: word, maxlen = '', word
         if type(n)==str: word = n
@@ -167,7 +169,7 @@ class GPT(Data, nn.Module):
         return logits, loss
     
     def fit(self, n: int = TRAINING_STEPS, info: bool = False, batchsize: int = BATCH, plot: bool = False):
-        if len(self.traindata) <= batchsize:
+        if len(self.traindata) <= self.context+1:
             print("No data to train with!")
             return
         self.train()
@@ -175,15 +177,15 @@ class GPT(Data, nn.Module):
         for i in trange(n):
             X, Y = self.trainingset(batchsize)
             self.optimizer.zero_grad()
-            _, loss = self.forward(X,Y)
+            _, loss = self(X,Y)
             loss.backward()
             self.optimizer.step()
-            if info:
+            if info or plot:
                 if i%1000==0 or i == n-1: print(f"{i}. {loss.item():.3f}")
                 if plot: trackloss.append(loss.item())
         if plot:
             if len(trackloss) % 10: t = torch.tensor(trackloss)
-            else: t = torch.tensor(trackloss).view(-1, n//10).mean(1)
+            else: t = torch.tensor(trackloss).view(-1, 10).mean(1)
             plt.plot(t)
 
     @torch.no_grad()
@@ -194,13 +196,15 @@ class GPT(Data, nn.Module):
             return
         self.eval()
         X, Y = self.trainingset(n, 'dev')
-        _, loss = self.forward(X,Y)
+        _, loss = self(X,Y)
         return loss
     
     @torch.no_grad()
     def generate(self, word: str = '', maxlen: int = MAXTOKENS) -> str:
         """Generate one word based on training data."""
-        if not word: context = torch.zeros((1,), dtype=torch.long, device=DEVICE)
+        if not word:
+            index = self.rlookup['\n']
+            context = torch.tensor([index,index], device=DEVICE)
         else: context = torch.tensor(self.encode(word),device=DEVICE)
         self.eval()
         for i in range(maxlen):
@@ -208,7 +212,9 @@ class GPT(Data, nn.Module):
             probs = F.softmax(logits[-1], dim=-1)
             index = torch.multinomial(probs, 1)
             context = torch.cat((context,index), 0) # Add one to context (till maxlen)
-        return self.decode(context.tolist())
+        context = context.tolist()
+        if not word: context = context[2:]
+        return self.decode(context)
     
     def generateN(self, n: int = 10, word: str = '', maxlen: int = MAXTOKENS) -> list:
         """Generate a list of N words based on training data."""
@@ -219,9 +225,9 @@ class GPT(Data, nn.Module):
 
     @torch.no_grad()
     def save(self, file: str, vocabfile: str = ''):
-        """Save the model's parameters onto a file. It is reccomended to also save its vocab."""
+        """Save the model's parameters onto a file. It is recommended to also save its vocab."""
         with open(file, 'w', encoding='utf-8') as f:
-            validation = f"[{BLOCK},{EMBEDIMS},{HEAD_SIZE},{HEAD_NUMBER},{SINGLE_HEAD_SIZE},{FFWD_HIDDEN},{N_LAYERS},{self.vocab_size}]\n"
+            validation = f"[{self.context},{EMBEDIMS},{HEAD_SIZE},{HEAD_NUMBER},{SINGLE_HEAD_SIZE},{FFWD_HIDDEN},{N_LAYERS},{self.vocab_size}]\n"
             f.write(validation)
             for m in self.parameters():
                 f.write("\n".join(map(lambda x: str(x), m.view(-1).tolist())))
@@ -243,15 +249,14 @@ class GPT(Data, nn.Module):
     def load(self, file: str):
         """Load the model's parameters."""
         with open(file, 'r', encoding='utf-8') as f:
-            validation = f"[{BLOCK},{EMBEDIMS},{HEAD_SIZE},{HEAD_NUMBER},{SINGLE_HEAD_SIZE},{FFWD_HIDDEN},{N_LAYERS},{self.vocab_size}]"
+            validation = f"[{self.context},{EMBEDIMS},{HEAD_SIZE},{HEAD_NUMBER},{SINGLE_HEAD_SIZE},{FFWD_HIDDEN},{N_LAYERS},{self.vocab_size}]"
             first = f.readline().strip()
             if validation != first:
                 try:
                     b,e,h1,h2,shs,ff,nl,vs = map(int,first.removeprefix('[').removesuffix(']').split(','))
                 except:
-                    print("Given file doesn't contain matching validation!")
-                    return
-                print(f"""Given model doesn't match! Required hyper-parameters:
+                    raise ValueError("Given file doesn't contain matching validation!")
+                raise ValueError(f"""Given model doesn't match! Required hyper-parameters:
                 context={b}, embedDims={e}, headSize={h1},headNum={h2},singleHeadSize={shs}
                 ffwdHidden={ff},nLayers={nl},vocabSize={vs}""")
                 return
@@ -261,7 +266,7 @@ class GPT(Data, nn.Module):
                 m.grad = None
     
     @torch.no_grad()
-    def plot(self, vectors: str = None, basicflatten: bool = False):
+    def plot(self, vectors: torch.Tensor | None = None, basicflatten: bool = False) -> None:
         """Shows the way the model maps the characters as vectors."""
         check =  dict([(i,str(i)) for i in range(1000)])
         if vectors is None:
@@ -279,9 +284,9 @@ class GPT(Data, nn.Module):
             plt.text(C[i,0].item(), C[i,1].item(), check[i] ,ha="center",va="center",color="white")
         plt.grid('minor')
     
-    def flatten(self, vectors: torch.tensor) -> torch.tensor:
-        """Reduces N-dimensional vectors to 2D (with SVD)"""
-        U, S, _ = torch.svd(vectors)
+    def flatten(self, vectors: torch.Tensor) -> torch.Tensor:
+        """Reduces N-dimensional vectors to 2D (with PCA)"""
+        U, S, _ = torch.linalg.svd(vectors-vectors.mean(dim=0,keepdim=True))
         return U[:, :2] @ torch.diag(S[:2])
     
     def size(self) -> int:
