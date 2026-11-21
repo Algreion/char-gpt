@@ -15,6 +15,7 @@ SINGLE_HEAD_SIZE = HEAD_SIZE // HEAD_NUMBER # Usually multiple heads are smaller
 FFWD_HIDDEN = 4
 DROPOUT = 0.05
 N_LAYERS = 6
+assert EMBEDIMS % HEAD_NUMBER == 0, "Embedding dimensions must be divisible by head number."
 
 # Default stats
 BATCH = 64
@@ -60,7 +61,7 @@ class Data:
 
 class Head(nn.Module):
     """Single head of self-attention"""
-    def __init__(self, head_size: int = HEAD_SIZE, context: int = BLOCK, n_embed: int = EMBEDIMS):
+    def __init__(self, head_size: int = SINGLE_HEAD_SIZE, context: int = BLOCK, n_embed: int = EMBEDIMS):
         super().__init__()
         self.key = nn.Linear(n_embed, head_size, bias=False) # Every char has info about itself
         self.query = nn.Linear(n_embed, head_size, bias=False) # Every char wants to know specific things
@@ -147,7 +148,7 @@ class GPT(Data, nn.Module):
     def inference(self, inputs):
         T = inputs.numel()
         token_embeddings = self.token_embedding(inputs) #  token into N-dimensional space.
-        pos_embeddings = self.position_embedding(torch.arange(T, device=DEVICE)) # Embed also its position.
+        pos_embeddings = self.position_embedding(torch.arange(T, device=inputs.device)) # Embed also its position.
         activation = token_embeddings + pos_embeddings # Sum ^ and ^^ to get all info about individual token
         refined = self.blocks(activation) # Refine it with self-attention (context of other tokens)
         normalized = self.lnf(refined)
@@ -157,7 +158,7 @@ class GPT(Data, nn.Module):
         """Returns the logits and loss of the model."""
         B, T = inputs.shape
         token_embeddings = self.token_embedding(inputs) # [Batch,Context,VocabSize] | Prediction of char given previous
-        pos_embeddings = self.position_embedding(torch.arange(T, device=DEVICE))
+        pos_embeddings = self.position_embedding(torch.arange(T, device=inputs.device))
         activation = token_embeddings + pos_embeddings
         refined = self.blocks(activation)
         normalized = self.lnf(refined)
@@ -180,24 +181,27 @@ class GPT(Data, nn.Module):
             _, loss = self(X,Y)
             loss.backward()
             self.optimizer.step()
-            if info or plot:
-                if i%1000==0 or i == n-1: print(f"{i}. {loss.item():.3f}")
-                if plot: trackloss.append(loss.item())
+            if info and (i%1000==0 or i == n-1): print(f"{i}. {loss.item():.3f}")
+            if plot: trackloss.append(loss.item())
         if plot:
             if len(trackloss) % 10: t = torch.tensor(trackloss)
             else: t = torch.tensor(trackloss).view(-1, 10).mean(1)
             plt.plot(t)
 
     @torch.no_grad()
-    def validate_loss(self, n: int = 1000):
-        """Validate loss over the dev dataset."""
-        if len(self.devdata) <= 1000: 
-            print("Not enough dev-data to validate loss with!")
-            return
+    def estimate_loss(self, batches: int = 100, batchsize: int = BATCH):
+        """Mean loss over random batches. Checks train and dev."""
+        prev_training = self.training
         self.eval()
-        X, Y = self.trainingset(n, 'dev')
-        _, loss = self(X,Y)
-        return loss
+        result = {}
+        for split in ('train','dev'):
+            losses = torch.zeros(batches)
+            for k in range(batches):
+                X,Y = self.trainingset(batchsize, split)
+                losses[k] = self(X,Y)[1].item()
+            result[split] = losses.mean().item()
+        self.train(prev_training)
+        return result
     
     @torch.no_grad()
     def generate(self, word: str = '', maxlen: int = MAXTOKENS, temperature=1.0, top_k=None) -> str:
@@ -206,7 +210,7 @@ class GPT(Data, nn.Module):
             index = self.rlookup['\n']
             context = torch.tensor([index,index], device=DEVICE)
         else: context = torch.tensor(self.encode(word),device=DEVICE)
-        if temperature==0: raise ZeroDivisionError
+        if temperature==0: top_k=1 # Greedy decoding
         if top_k is not None and top_k<1: top_k=None
         self.eval()
         for _ in range(maxlen):
@@ -260,12 +264,11 @@ class GPT(Data, nn.Module):
             if validation != first:
                 try:
                     b,e,h1,h2,shs,ff,nl,vs = map(int,first.removeprefix('[').removesuffix(']').split(','))
-                except:
+                except ValueError:
                     raise ValueError("Given file doesn't contain matching validation!")
                 raise ValueError(f"""Given model doesn't match! Required hyper-parameters:
                 context={b}, embedDims={e}, headSize={h1},headNum={h2},singleHeadSize={shs}
                 ffwdHidden={ff},nLayers={nl},vocabSize={vs}""")
-                return
             for m in self.parameters():
                 data = [float(f.readline()) for _ in range(m.numel())]
                 m.data.copy_(torch.tensor(data, dtype=m.dtype).view(m.shape))
@@ -288,7 +291,7 @@ class GPT(Data, nn.Module):
         plt.scatter(C[:,0].data, C[:,1].data, s = 200)
         for i in range(C.shape[0]):
             plt.text(C[i,0].item(), C[i,1].item(), check[i] ,ha="center",va="center",color="white")
-        plt.grid('minor')
+        plt.grid(True)
     
     def flatten(self, vectors: torch.Tensor) -> torch.Tensor:
         """Reduces N-dimensional vectors to 2D (with PCA)"""
