@@ -3,8 +3,14 @@ import torch.nn as nn
 from torch.nn import functional as F
 from matplotlib import pyplot as plt
 from time import time
+from pathlib import Path
 
 SEED = 42
+DATASET = 'models/shakespeare.txt'
+MODEL = 'models/transformer-shspr.txt'
+VOCAB = 'models/vocab.txt'
+cur = Path(__file__).resolve().parent
+DATASET,MODEL,VOCAB = cur/DATASET,cur/MODEL,cur/VOCAB
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 # Hyperparameters
@@ -178,7 +184,7 @@ class GPT(Data, nn.Module):
         """Trains model for n steps. Returns [(step, train_loss, dev_loss), ...]"""
         if len(self.traindata) <= self.context+1:
             print("No data to train with!")
-            return
+            return []
         self.train()
         history, start = [], time()
         for i in range(n):
@@ -191,7 +197,7 @@ class GPT(Data, nn.Module):
                 est = self.estimate_loss(50)
                 history.append((i, est['train'], est['dev']))
                 print(f"step {i+1 if i in [0,n-1] else i:>{len(str(n))}}: train {est['train']:.3f} | dev {est['dev']:.3f} | {round(time()-start)}s", end='\r', flush=True)
-        if plot:
+        if plot and eval_gaps is not None:
             steps, train, dev = zip(*history)
             plt.figure()
             plt.plot(steps, train, label='train'); plt.plot(steps, dev, label='dev')
@@ -215,11 +221,11 @@ class GPT(Data, nn.Module):
     
     @torch.no_grad()
     def generate(self, word: str = '', maxlen: int = MAXTOKENS, temperature=1.0, top_k=None) -> str:
-        """Generate one word based on training data."""
+        """Generate a token sequence based on training data."""
         if not word:
             context = torch.tensor(self.encode(GEN_SEED), device=DEVICE)
         else: context = torch.tensor(self.encode(word),device=DEVICE)
-        if temperature==0: top_k=1 # Greedy decoding
+        if temperature==0: temperature, top_k= 1.0, 1 # Greedy decoding
         if top_k is not None and top_k<1: top_k=None
         self.eval()
         for _ in range(maxlen):
@@ -232,7 +238,7 @@ class GPT(Data, nn.Module):
             index = torch.multinomial(probs, 1)
             context = torch.cat((context,index), 0) # Add one to context (till maxlen)
         context = context.tolist()
-        if not word: context = context[2:]
+        if not word: context = context[len(GEN_SEED):]
         return self.decode(context)
     
     def generateN(self, n: int = 10, word: str = '', maxlen: int = MAXTOKENS, temperature=1.0, top_k=None) -> list:
@@ -314,36 +320,53 @@ class GPT(Data, nn.Module):
             n += p.numel()
         return n
 
-def run_training(data:str='./models/shakespeare.txt', out:str='./models/transformer-shspr.txt', vocab:str='./models/vocab.txt',
+def run_training(data:str=DATASET, out:str=MODEL, vocab:str=VOCAB,
     training_steps = 20000) -> GPT:
     """Retrains the demo model on Shakespeare's dataset."""
+    out,vocab = MODEL.with_stem(MODEL.stem+'-retrained'),VOCAB.with_stem(VOCAB.stem+'-retrained')
     torch.manual_seed(SEED)
     g = GPT(data).to(DEVICE)
     g.fit(training_steps, plot=True, eval_gaps=500)
-    plt.savefig('loss.png', dpi=150)
+    plt.savefig(cur/'loss-retrained.png', dpi=150)
     est = g.estimate_loss(200)
     print()
     print(f"final train: {est['train']:.3f} | final dev: {est['dev']:.3f}")
-    g.save(out, vocab)
+    g.save(out)
     return g
 
-def run_demo(model:str='./models/transformer-shspr.txt', vocab:str='./models/vocab.txt'):
+def run_demo(model:str=MODEL, vocab:str=VOCAB,
+    sample: int | str = 0):
     """Samples the demo model."""
     g = GPT(vocab, model).to(DEVICE) # Dataset isn't needed
-    torch.manual_seed(SEED)
-    print(g.sample(300, temperature=0.8)+'...')
+    if not sample:
+        sample = 300
+        torch.manual_seed(SEED)
+    print(g.sample(sample, temperature=0.8)+'...')
 
 
 if __name__ == '__main__':
     import sys
-    MSG = "char-gpt | Run 'py transformer.py demo/train' to view a demo on Shakespeare."
-    if len(sys.argv) == 2:
+    def failsafe() -> GPT | None:
+        print("char-gpt | Run 'python transformer.py demo/train/sample (value)' to view a demo on Shakespeare.")
+        try: return GPT(VOCAB, MODEL).to(DEVICE)
+        except FileNotFoundError: pass
+    if len(sys.argv) in [2,3]:
         match sys.argv[1].lower():
             case 'train' | 't':
-                g = run_training()
-            case 'demo' | 'sample' | 'd':
+                ts = 20000
+                if len(sys.argv)==3:
+                    try: ts = int(sys.argv[2])
+                    except ValueError: sys.exit("Usage: python transformer.py train [steps]")
+                g = run_training(training_steps=ts)
+            case 'demo' | 'd':
                 run_demo()
+            case 'sample' | 's':
+                s = 300
+                if len(sys.argv)==3:
+                    try: s = int(sys.argv[2])
+                    except ValueError: s = sys.argv[2]
+                run_demo(sample=s)
             case _:
-                print(MSG)
+                g = failsafe()
     else:
-        print(MSG)
+        g = failsafe()
