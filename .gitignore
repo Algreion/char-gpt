@@ -1,1 +1,3 @@
 __pycache__/
+models/*-retrained.txt
+loss-retrained.png
