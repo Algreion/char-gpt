@@ -2,7 +2,9 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 from matplotlib import pyplot as plt
-from tqdm import trange
+from time import time
+
+SEED = 42
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 # Hyperparameters
@@ -22,6 +24,9 @@ BATCH = 64
 MAXTOKENS = 300
 TRAINING_STEPS = 5000
 EPSILON = 1e-5
+
+# Default generation
+GEN_SEED = '\n\n' # Following Shakespeare's format
 
 class Data:
     """Character-level transformer | Shared data infrastructure."""
@@ -169,24 +174,29 @@ class GPT(Data, nn.Module):
         loss = F.cross_entropy(logits, labels)
         return logits, loss
     
-    def fit(self, n: int = TRAINING_STEPS, info: bool = False, batchsize: int = BATCH, plot: bool = False):
+    def fit(self, n: int = TRAINING_STEPS, batchsize: int = BATCH, eval_gaps: int | None = TRAINING_STEPS//10, plot: bool = False) -> list[tuple]:
+        """Trains model for n steps. Returns [(step, train_loss, dev_loss), ...]"""
         if len(self.traindata) <= self.context+1:
             print("No data to train with!")
             return
         self.train()
-        if plot: trackloss = []
-        for i in trange(n):
+        history, start = [], time()
+        for i in range(n):
             X, Y = self.trainingset(batchsize)
             self.optimizer.zero_grad()
             _, loss = self(X,Y)
             loss.backward()
             self.optimizer.step()
-            if info and (i%1000==0 or i == n-1): print(f"{i}. {loss.item():.3f}")
-            if plot: trackloss.append(loss.item())
+            if eval_gaps is not None and (i%eval_gaps == 0 or i==n-1):
+                est = self.estimate_loss(50)
+                history.append((i, est['train'], est['dev']))
+                print(f"step {i+1 if i in [0,n-1] else i:>{len(str(n))}}: train {est['train']:.3f} | dev {est['dev']:.3f} | {round(time()-start)}s", end='\r', flush=True)
         if plot:
-            if len(trackloss) % 10: t = torch.tensor(trackloss)
-            else: t = torch.tensor(trackloss).view(-1, 10).mean(1)
-            plt.plot(t)
+            steps, train, dev = zip(*history)
+            plt.figure()
+            plt.plot(steps, train, label='train'); plt.plot(steps, dev, label='dev')
+            plt.xlabel('step'); plt.ylabel('loss'); plt.legend(); plt.grid(True)
+        return history
 
     @torch.no_grad()
     def estimate_loss(self, batches: int = 100, batchsize: int = BATCH):
@@ -207,8 +217,7 @@ class GPT(Data, nn.Module):
     def generate(self, word: str = '', maxlen: int = MAXTOKENS, temperature=1.0, top_k=None) -> str:
         """Generate one word based on training data."""
         if not word:
-            index = self.rlookup['\n']
-            context = torch.tensor([index,index], device=DEVICE)
+            context = torch.tensor(self.encode(GEN_SEED), device=DEVICE)
         else: context = torch.tensor(self.encode(word),device=DEVICE)
         if temperature==0: top_k=1 # Greedy decoding
         if top_k is not None and top_k<1: top_k=None
@@ -305,6 +314,36 @@ class GPT(Data, nn.Module):
             n += p.numel()
         return n
 
-if __name__=='__main__':
-    g = GPT('./models/shakespeare.txt','./models/transformer-shspr.txt')
-    g = g.to(DEVICE)
+def run_training(data:str='./models/shakespeare.txt', out:str='./models/transformer-shspr.txt', vocab:str='./models/vocab.txt',
+    training_steps = 20000) -> GPT:
+    """Retrains the demo model on Shakespeare's dataset."""
+    torch.manual_seed(SEED)
+    g = GPT(data).to(DEVICE)
+    g.fit(training_steps, plot=True, eval_gaps=500)
+    plt.savefig('loss.png', dpi=150)
+    est = g.estimate_loss(200)
+    print()
+    print(f"final train: {est['train']:.3f} | final dev: {est['dev']:.3f}")
+    g.save(out, vocab)
+    return g
+
+def run_demo(model:str='./models/transformer-shspr.txt', vocab:str='./models/vocab.txt'):
+    """Samples the demo model."""
+    g = GPT(vocab, model).to(DEVICE) # Dataset isn't needed
+    torch.manual_seed(SEED)
+    print(g.sample(300, temperature=0.8)+'...')
+
+
+if __name__ == '__main__':
+    import sys
+    MSG = "char-gpt | Run 'py transformer.py demo/train' to view a demo on Shakespeare."
+    if len(sys.argv) == 2:
+        match sys.argv[1].lower():
+            case 'train' | 't':
+                g = run_training()
+            case 'demo' | 'sample' | 'd':
+                run_demo()
+            case _:
+                print(MSG)
+    else:
+        print(MSG)
