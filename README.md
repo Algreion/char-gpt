@@ -36,11 +36,11 @@ Which thou weep'st grieved...
 
 Run:
 - `python transformer.py sample` Samples the model for 300 characters, with 0.8 temperature.
-- `python transformer.py sample "ROMEO:"` Samples text beginning with the argument. If a number is passed; it will sample that amount of characters instead.
+- `python transformer.py sample "ROMEO:"` Samples text beginning with the argument. If a number is passed, it will sample that amount of characters instead.
 - `python transformer.py demo` Reproduces the setup for the sample above with seed 42 (PyTorch version 2.9.1+cu128).
-- `python transformer.py train 5000` Retrains a model on the dataset with 5000 steps.
+- `python transformer.py train [steps]` Retrains a model on the dataset with a default 20,000 steps. The results are saved in models/transformer-shspr-retrained.txt and loss-retrained.png.
 
-Dataset: [Tiny Shakespeare](https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt), which was lightly cleaned up by removing double dashes, the 3 in '3 KING HENRY VI', &c, and fixing the typo 'sha$l'. This reduced the character count from 65 to 62. The cleaned-up dataset is in data/shakespeare.txt.
+Dataset: [Tiny Shakespeare](https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt), which was lightly cleaned up by removing double dashes, the 3 in '3 KING HENRY VI', &c, and fixing the typo 'sha$l'. This reduced the vocabulary from 65 to 62. The cleaned-up dataset is in data/shakespeare.txt.
 
 ## Demo - Model
 **Architecture**:
@@ -52,7 +52,7 @@ Dataset: [Tiny Shakespeare](https://raw.githubusercontent.com/karpathy/char-rnn/
 - Vocabulary: 62 characters (from dataset)
 - Positional information: Learned embeddings
 - Context: 64
-- Optimizer: AdamW (), LR 3e-4, batch size 64
+- Optimizer: AdamW, LR 3e-4, batch size 64
 - Total parameters: 1,066,862 (`GPT.size()`)
 
 **Training**:
@@ -84,10 +84,13 @@ g.sample("ROMEO:", temperature=0.8, top_k=40)
 ## Debugging
 An earlier version of the model produced much worse text when sampled than what the loss suggested.
 
-This was due to attention being only causal when a training flag was set, meaning that during generation the model received information it never saw during training, which skewed the next-token generation. As the loss used the training flag, it couldn't predict the issue.
+This was due to attention being only causal when a training flag was set, meaning that during generation the model's earlier positions attended to later ones, which skewed predictions as it was unlike what the model had seen during training. As the loss used the training flag, it couldn't reveal the issue.
 
-This was fixed by using PyTorch's standard train() and eval(), and always having is_causal=True. Below are before and after samples using the exact same seed.
+This was fixed by using PyTorch's standard train() and eval(), and always having is_causal=True.
 <details>
+<summary>Before/after samples</summary>
+(seed 100, temperature 1)
+
 Before:
 
 ```

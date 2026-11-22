@@ -222,6 +222,8 @@ class GPT(Data, nn.Module):
     @torch.no_grad()
     def generate(self, word: str = '', maxlen: int = MAXTOKENS, temperature=1.0, top_k=None) -> str:
         """Generate a token sequence based on training data."""
+        fail = sorted({c for c in word if c not in self.rlookup})
+        if fail: raise ValueError(f"Characters not in the model's vocabulary: {fail}")
         if not word:
             context = torch.tensor(self.encode(GEN_SEED), device=next(self.parameters()).device)
         else: context = torch.tensor(self.encode(word), device=next(self.parameters()).device)
@@ -320,10 +322,9 @@ class GPT(Data, nn.Module):
             n += p.numel()
         return n
 
-def run_training(data:str=DATASET, out:str=MODEL, vocab:str=VOCAB,
-    training_steps = 20000) -> GPT:
+RETRAINED = MODEL.with_stem(MODEL.stem+'-retrained')
+def run_training(data:str=DATASET, out:str=RETRAINED, training_steps = 20000) -> GPT:
     """Retrains the demo model on Shakespeare's dataset."""
-    out,vocab = MODEL.with_stem(MODEL.stem+'-retrained'),VOCAB.with_stem(VOCAB.stem+'-retrained')
     torch.manual_seed(SEED)
     g = GPT(data).to(DEVICE)
     g.fit(training_steps, plot=True, eval_gaps=500)
