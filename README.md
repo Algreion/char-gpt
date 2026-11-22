@@ -35,12 +35,12 @@ Which thou weep'st grieved...
 ```
 
 Run:
-- `python transformer.py sample` Samples the model for 300 characters, with 0.8 temperature. The dataset isn't required for sampling.
+- `python transformer.py sample` Samples the model for 300 characters, with 0.8 temperature.
 - `python transformer.py sample "ROMEO:"` Samples text beginning with the argument. If a number is passed; it will sample that amount of characters instead.
 - `python transformer.py demo` Reproduces the setup for the sample above with seed 42 (PyTorch version 2.9.1+cu128).
-- `python transformer.py train 5000` Retrains a model on the dataset with 5000 steps. Requires downloading the dataset first.
+- `python transformer.py train 5000` Retrains a model on the dataset with 5000 steps.
 
-The dataset used is [Tiny Shakespeare](https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt). The text itself is in the public domain.
+Dataset: [Tiny Shakespeare](https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt), which was lightly cleaned up by removing double dashes, the 3 in '3 KING HENRY VI', &c, and fixing the typo 'sha$l'. This reduced the character count from 65 to 62. The cleaned-up dataset is in data/shakespeare.txt.
 
 ## Demo - Model
 **Architecture**:
@@ -81,6 +81,32 @@ g.sample(100)
 g.sample("ROMEO:", temperature=0.8, top_k=40)
 ```
 
+## Debugging
+An earlier version of the model produced much worse text when sampled than what the loss suggested.
+
+This was due to attention being only causal when a training flag was set, meaning that during generation the model received information it never saw during training, which skewed the next-token generation. As the loss used the training flag, it couldn't predict the issue.
+
+This was fixed by using PyTorch's standard train() and eval(), and always having is_causal=True. Below are before and after samples using the exact same seed.
+<details>
+Before:
+
+```
+Messenger stooping; such my consistraist one, the but is the grief;
+With the repul, unnature of the...
+```
+
+After:
+
+```
+Messenger:
+The won; sir, my lord.
+
+POLIXENES:
+God be silk,
+Profit your brother followers love his ch...
+```
+</details>
+
 ## Known limitations
 - The model learns spelling, formatting and local word structures but not meaning. This is expected due to its parameter count and 64-character context, which isn't enough to learn sentence-level structure.
 - The vocabulary is fixed to the characters encountered in the training dataset.
@@ -95,4 +121,4 @@ g.sample("ROMEO:", temperature=0.8, top_k=40)
 - A model trained on a larger dataset, such as TinyStories, capable of meaningful output.
 
 ## Acknowledgements
-The project is inspired by the [Let's build GPT](https://www.youtube.com/watch?v=kCc8FmEb1nY) lecture, then branched off with estimated loss, sampling option, custom saving/loading, different parameters and a complete demo.
+The architecture follows the [Attention is all you need](https://arxiv.org/abs/1706.03762) paper, and the structure was inspired by the [Let's build GPT](https://www.youtube.com/watch?v=kCc8FmEb1nY) lecture. The implementation is my own.

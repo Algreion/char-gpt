@@ -6,7 +6,7 @@ from time import time
 from pathlib import Path
 
 SEED = 42
-DATASET = 'models/shakespeare.txt'
+DATASET = 'data/shakespeare.txt'
 MODEL = 'models/transformer-shspr.txt'
 VOCAB = 'models/vocab.txt'
 cur = Path(__file__).resolve().parent
@@ -223,8 +223,8 @@ class GPT(Data, nn.Module):
     def generate(self, word: str = '', maxlen: int = MAXTOKENS, temperature=1.0, top_k=None) -> str:
         """Generate a token sequence based on training data."""
         if not word:
-            context = torch.tensor(self.encode(GEN_SEED), device=DEVICE)
-        else: context = torch.tensor(self.encode(word),device=DEVICE)
+            context = torch.tensor(self.encode(GEN_SEED), device=next(self.parameters()).device)
+        else: context = torch.tensor(self.encode(word), device=next(self.parameters()).device)
         if temperature==0: temperature, top_k= 1.0, 1 # Greedy decoding
         if top_k is not None and top_k<1: top_k=None
         self.eval()
