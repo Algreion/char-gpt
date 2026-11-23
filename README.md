@@ -61,7 +61,7 @@ Dataset: [Tiny Shakespeare](https://raw.githubusercontent.com/karpathy/char-rnn/
 - Dev loss plateaus after around 10k training steps, while train loss keeps falling.
 - The training is approximately reproducible using seed 42.
 
-![Loss plot](loss.png)
+<img src="loss.png" alt="Loss plot" width="300" />
 
 ## Usage as a library
 ```python
